@@ -127,7 +127,7 @@ class AggregateAndFormat(Executor):
 def build_workflow():
     client = OpenAIResponsesClient(
         api_key=os.getenv("OPENAI_API_KEY"),
-        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        model_id=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
     )
 
     # Drei parallele Analyse-Agents
@@ -168,7 +168,7 @@ def print_visualization(workflow):
     print("\n=== Mermaid ===")
     print(viz.to_mermaid())
     print("\n=== SVG Export ===")
-    svg_file = viz.export(format="svg")
+    svg_file = viz.export(filename="workflow", format="svg")
     print(f"SVG gespeichert: {svg_file}")
 
 
