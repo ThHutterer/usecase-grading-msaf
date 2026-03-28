@@ -1,0 +1,13 @@
+services:
+  usecase-grader:
+    build: .
+    container_name: usecase-grader
+    env_file: .env
+    ports:
+      - "127.0.0.1:8088:8088"  # nur für lokales Testen — vor Prod-Deploy auskommentieren
+    networks:
+      - localai_default
+
+networks:
+  localai_default:
+    external: true

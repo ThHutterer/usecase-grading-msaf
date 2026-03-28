@@ -8,7 +8,7 @@ Den bestehenden MS Agent Framework Use-Case-Grading-Workflow als eigenständigen
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Docker Network: ai-services (external, shared)     │
+│  Docker Network: localai_default (external)         │
 │                                                     │
 │  ┌──────────────┐       ┌────────────────────────┐  │
 │  │  OpenWebUI    │──────▶│  usecase-grader        │  │
@@ -18,7 +18,7 @@ Den bestehenden MS Agent Framework Use-Case-Grading-Workflow als eigenständigen
 │  │  Connection: │       │  FastAPI Server         │  │
 │  │  http://     │       │  ├─ /v1/models          │  │
 │  │  usecase-    │       │  ├─ /v1/chat/completions│  │
-│  │  grader:8000 │       │  └─ MS Agent Framework  │  │
+│  │  grader:8088 │       │  └─ MS Agent Framework  │  │
 │  └──────────────┘       │      └─ OpenAI API      │  │
 │                         └────────────────────────┘  │
 └─────────────────────────────────────────────────────┘
@@ -27,51 +27,24 @@ Den bestehenden MS Agent Framework Use-Case-Grading-Workflow als eigenständigen
 ## Projektstruktur
 
 ```
-usecase-grader/
+usecase-grading-msaf/
 ├── PLAN.md
 ├── README.md
-├── .env.example          # Platzhalter für Secrets
+├── .env.example          # OPENAI_API_KEY + OPENAI_MODEL (bereits vorhanden)
 ├── .env                  # Echte Keys (in .gitignore)
 ├── .gitignore
-├── docker-compose.yml
-├── Dockerfile
-├── requirements.txt
-├── src/
-│   ├── __init__.py
-│   ├── server.py         # FastAPI App mit /v1/chat/completions + /v1/models
-│   ├── workflow.py        # Bestehender MS Agent Framework Workflow (kopieren/anpassen)
-│   └── config.py          # Settings via pydantic-settings + .env
-└── tests/
-    └── test_server.py     # Smoke test: POST an /v1/chat/completions
+├── docker-compose.yml    # neu
+├── Dockerfile            # neu
+├── requirements.txt      # fastapi + uvicorn hinzufügen
+├── main.py               # unverändert (build_workflow() wird importiert)
+└── server.py             # neu: FastAPI App mit /v1/chat/completions + /v1/models
 ```
+
+Keine Umstrukturierung. `server.py` importiert `build_workflow` direkt aus `main.py`.
 
 ## Umsetzungsschritte
 
-### 1. Shared Docker Network anlegen
-
-```bash
-docker network create ai-services
-```
-
-Einmalig auf dem Host ausführen. Beide Compose-Stacks joinen dieses Netzwerk.
-
-### 2. local-ai Stack anpassen
-
-In der bestehenden `docker-compose.yml` des local-ai Stacks das externe Netzwerk hinzufügen:
-
-```yaml
-networks:
-  ai-services:
-    external: true
-
-services:
-  open-webui:
-    networks:
-      - default
-      - ai-services
-```
-
-### 3. Neuen Compose Stack erstellen
+### 1. Neuen Compose Stack erstellen
 
 `docker-compose.yml`:
 
@@ -81,48 +54,33 @@ services:
     build: .
     container_name: usecase-grader
     env_file: .env
-    ports:
-      - "8000:8000"   # Optional: nur für lokales Debugging
+    # ports: nur bei lokalem Debugging einkommentieren
+    # - "127.0.0.1:8088:8088"
     networks:
-      - ai-services
+      - localai_default
 
 networks:
-  ai-services:
+  localai_default:
     external: true
 ```
 
+`localai_default` existiert bereits (wird vom local-ai Stack erzeugt, open-webui ist darin). Kein `docker network create` nötig, kein Anpassen des local-ai Stacks.
+
 ### 4. Secrets Handling
 
-`.env.example` (kommt ins Repo):
+`.env.example` bleibt unverändert (existiert bereits):
 
 ```env
 OPENAI_API_KEY=sk-...
-OPENAI_CHAT_MODEL_ID=gpt-4o
-# Oder Azure OpenAI:
-# AZURE_OPENAI_API_KEY=...
-# AZURE_OPENAI_ENDPOINT=https://xxx.openai.azure.com/
-# AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=...
+OPENAI_MODEL=gpt-4o-mini
 ```
 
-`.gitignore`:
+`server.py` ruft `load_dotenv()` nicht nochmal auf — das macht bereits `main.py` beim Import. Die Env-Vars `OPENAI_API_KEY` und `OPENAI_MODEL` werden per `env_file` im Compose übergeben.
 
+`requirements.txt` bekommt zwei neue Zeilen:
 ```
-.env
-__pycache__/
-*.pyc
-```
-
-`config.py` lädt via `pydantic-settings` + `load_dotenv()`:
-
-```python
-from pydantic_settings import BaseSettings
-
-class Settings(BaseSettings):
-    openai_api_key: str
-    openai_chat_model_id: str = "gpt-4o"
-
-    class Config:
-        env_file = ".env"
+fastapi
+uvicorn[standard]
 ```
 
 ### 5. FastAPI Server (server.py)
@@ -150,15 +108,7 @@ Der Server muss die OpenAI-API-Response-Struktur exakt einhalten:
 }
 ```
 
-### 6. Workflow Integration (workflow.py)
-
-Den bestehenden MS Agent Framework Workflow hier reinkopieren/importieren. Anpassungen:
-
-- `agent-framework-core` als Dependency in `requirements.txt` (RC5: `agent-framework-core==1.0.0rc5`)
-- Settings aus `config.py` statt hardcoded Keys
-- Workflow-Funktion die einen String (User-Input) nimmt und einen String (Grading-Ergebnis) zurückgibt
-
-### 7. Dockerfile
+### 6. Dockerfile
 
 ```dockerfile
 FROM python:3.12-slim
@@ -168,34 +118,31 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY src/ ./src/
+COPY main.py server.py ./
 
-EXPOSE 8000
+EXPOSE 8088
 
-CMD ["uvicorn", "src.server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8088"]
 ```
 
-### 8. OpenWebUI Konfiguration
+### 7. OpenWebUI Konfiguration
 
 In OpenWebUI Admin Panel → Settings → Connections:
 
 - Neue OpenAI-kompatible Connection hinzufügen
-- URL: `http://usecase-grader:8000/v1`
+- URL: `http://usecase-grader:8088/v1`
 - API Key: beliebig (oder leer, wenn kein Auth am Grader)
 - Danach taucht "usecase-grader" als Modell in der Modellauswahl auf
 
 ## Reihenfolge beim Bauen mit Claude Code
 
-1. Projektordner + `.env.example` + `.gitignore` anlegen
-2. `config.py` mit pydantic-settings
-3. `server.py` mit den zwei Endpunkten (erst Stub ohne Workflow)
-4. Docker-Setup (Dockerfile + docker-compose.yml)
-5. Testen: Container starten, `curl http://localhost:8000/v1/models` muss JSON liefern
-6. `workflow.py` — bestehenden Agent Framework Code integrieren
-7. End-to-End Test: `curl -X POST http://localhost:8000/v1/chat/completions` mit einem Beispiel-Use-Case
-8. Shared Network + local-ai Stack anpassen
-9. In OpenWebUI als Connection einrichten und testen
-10. README.md schreiben
+1. `fastapi` + `uvicorn[standard]` in `requirements.txt` ergänzen
+2. `server.py` mit den zwei Endpunkten schreiben (importiert `build_workflow` aus `main.py`)
+3. Docker-Setup: `Dockerfile` + `docker-compose.yml`
+4. Testen: Port temporär in compose exposen, Container starten, `curl http://localhost:8088/v1/models` muss JSON liefern
+5. End-to-End Test: `curl -X POST http://localhost:8088/v1/chat/completions` mit einem Beispiel-Use-Case
+6. Port-Expose aus compose entfernen, in OpenWebUI als Connection einrichten und testen (`http://usecase-grader:8088/v1`)
+7. README.md schreiben
 
 ## Offene Entscheidungen
 

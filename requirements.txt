@@ -1,3 +1,5 @@
-agent-framework --pre
+agent-framework==1.0.0rc5
 python-dotenv
 graphviz>=0.20.0
+fastapi
+uvicorn[standard]
